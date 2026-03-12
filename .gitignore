@@ -1,0 +1,5 @@
+# venv
+venv/
+
+# large data files
+data/

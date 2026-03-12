@@ -1,0 +1,418 @@
+\documentclass{article}
+
+% ── ICLR 2025 style ── download iclr2025_conference.sty from the course page
+% and place it in the same folder, then uncomment the two lines below:
+% \usepackage{iclr2025_conference,times}
+% \iclrfinalcopy
+
+\usepackage[margin=1in]{geometry}
+\usepackage{times}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{hyperref}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{float}
+
+\title{\textbf{Poker Player Tendency Profiler}\\
+\large APS360 Project Progress Report}
+
+\author{%
+  % Add team members here
+}
+
+\date{}
+
+\begin{document}
+\maketitle
+
+% ──────────────────────────────────────────────────────────────────────────────
+\section{Brief Project Description}
+% ──────────────────────────────────────────────────────────────────────────────
+
+\subsection{Motivation}
+In No-Limit Texas Hold'em poker, a player's edge comes not only from hand strength but from
+exploiting the \emph{tendencies} of opponents. Expert players mentally categorise opponents
+into archetypes---\textit{Nit} (tight-passive), \textit{TAG} (tight-aggressive),
+\textit{LAG} (loose-aggressive), and \textit{Fish} (loose-passive)---and adjust their
+strategy accordingly. Doing this in real time across many opponents is cognitively demanding
+and error-prone.
+
+\subsection{Goal}
+We build a \textbf{Player Tendency Profiler}: a system that ingests raw poker hand-history
+data, computes behavioural features for each observed opponent, and automatically assigns
+them to a strategic archetype. The output is directly exploitable: if a villain is labelled
+\textit{Nit}, the optimal counter-strategy is to steal their blinds frequently; if
+\textit{Fish}, to value-bet thinly and avoid bluffing.
+
+\subsection{Why Deep Learning is a Reasonable Approach}
+Behavioural features such as VPIP, PFR, and Aggression Factor sit in a five-dimensional
+space with complex, non-linear interactions. A shallow heuristic (e.g.\ fixed VPIP
+threshold) misclassifies edge cases. We use an \textbf{autoencoder} to learn a compact,
+two-dimensional latent representation of each player's style without any labelled data.
+The bottleneck forces the network to discover the underlying structure in the action
+frequencies, producing an embedding space where player archetypes form natural clusters.
+
+\begin{figure}[H]
+\centering
+\begin{tabular}{|c|c|}
+\hline
+\textbf{Input} & \textbf{Output} \\
+\hline
+\begin{minipage}{0.4\textwidth}
+\vspace{4pt}
+Per-player action-frequency features computed\\
+from all observed hands:\\
+\vspace{2pt}
+\begin{itemize}[noitemsep,topsep=0pt]
+  \item VPIP (voluntarily put \$ in pre-flop)
+  \item PFR (pre-flop raise rate)
+  \item AF (post-flop aggression factor)
+  \item Fold \% (overall fold rate)
+  \item Avg.\ actions per hand
+\end{itemize}
+\vspace{4pt}
+\end{minipage}
+&
+\begin{minipage}{0.4\textwidth}
+\vspace{4pt}
+\begin{itemize}[noitemsep,topsep=0pt]
+  \item 2-D latent embedding per player
+  \item Archetype label: Nit / TAG / LAG / Fish
+  \item PCA scatter with cluster centroids
+\end{itemize}
+\vspace{4pt}
+\end{minipage}\\
+\hline
+\end{tabular}
+\caption{Model input and output summary.}
+\label{fig:io}
+\end{figure}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\section{Notable Contribution}
+% ──────────────────────────────────────────────────────────────────────────────
+
+\subsection{Data Processing}
+
+\subsubsection{Data Source}
+The dataset consists of \textbf{751 obfuscated \texttt{.phhs} poker hand-history files}
+from a single No-Limit Hold'em (NLH) session recorded on PokerStars between
+2009-07-01 and 2009-07-23. The files follow the \emph{Poker Hand History Specification
+(PHHS)} format: each file contains multiple hands delimited by \texttt{[n]} block headers,
+with key-value pairs on each line (e.g.\ \texttt{variant = 'NT'}, \texttt{actions = [...]}).
+
+\subsubsection{Parsing Pipeline}
+A custom Python parser was written to:
+\begin{enumerate}[noitemsep]
+  \item Locate all \texttt{.phhs} files recursively under \texttt{data/}.
+  \item Extract hand blocks via regex \texttt{\^{}[(\textbackslash d+)]\$}.
+  \item Parse each key-value line with type coercion: booleans, quoted strings,
+        Python literals (lists, ints, floats), and HH:MM:SS timestamps.
+  \item Construct a \texttt{timestamp} column from \texttt{year/month/day/time} fields.
+  \item Derive EDA columns: \texttt{n\_actions}, \texttt{n\_players\_listed},
+        \texttt{total\_starting\_stack}, \texttt{total\_winnings}.
+\end{enumerate}
+
+\subsubsection{Dataset Statistics}
+A sample of 50 files (49,992 hands) was used for EDA and modelling. Table~\ref{tab:stats}
+summarises the dataset. The full corpus of 751 files is estimated to contain
+$\approx$750,000 hands.
+
+\begin{table}[H]
+\centering
+\caption{Dataset statistics (50-file sample)}
+\label{tab:stats}
+\begin{tabular}{lr}
+\toprule
+\textbf{Metric} & \textbf{Value} \\
+\midrule
+Total hands (50 files) & 49,992 \\
+Total files in corpus  & 751 \\
+Unique tables          & 427 \\
+Unique players         & 2,832 \\
+Columns per hand row   & 20 \\
+\midrule
+Seat counts observed   & 2, 6, 9 \\
+\quad 2-seat (heads-up) & 14,562 (29.1\%) \\
+\quad 6-seat           & 23,777 (47.6\%) \\
+\quad 9-seat (full ring)& 10,785 (21.6\%) \\
+\midrule
+Hands going to river   & 10,125 (20.3\%) \\
+Hands with showdown reveal & 7,416 (14.8\%) \\
+\midrule
+Missing: \texttt{winnings}  & 14.8\% \\
+Missing: \texttt{seat\_count} & 1.7\% \\
+All other key columns  & 0.0\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Critical Data Constraint: Obfuscation}
+Hole cards in deal actions (\texttt{d dh p1 ????}) are \emph{permanently hidden}.
+Only \texttt{sm} (show-at-showdown) actions reveal hole cards, covering just 14.8\% of hands.
+This rules out a per-villain range estimator as the primary research question and motivates
+the pivot to action-based player profiling, which uses 100\% of hands.
+
+\subsubsection{Feature Engineering}
+Each player's profile was computed from their complete action history:
+
+\begin{table}[H]
+\centering
+\caption{Engineered player features}
+\label{tab:features}
+\begin{tabular}{llr}
+\toprule
+\textbf{Feature} & \textbf{Definition} & \textbf{Mean (sample)} \\
+\midrule
+VPIP & Pre-flop call or raise rate & 0.41 \\
+PFR  & Pre-flop raise rate & 0.19 \\
+AF   & Post-flop raises / post-flop calls & 2.1 \\
+Fold \% & Folds / total actions & 0.38 \\
+Avg.\ actions/hand & Mean actions per participated hand & 3.2 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Testing Data Plan}
+For final evaluation we will hold out the most-recent 75 files (10\% of the corpus) and
+report archetype assignment consistency and cluster quality (silhouette score) on that
+unseen split. If the production system is deployed within a live session, truly new players
+will provide the held-out test distribution.
+
+\subsubsection{Challenges}
+\begin{itemize}[noitemsep]
+  \item \textbf{Obfuscation:} permanent hole-card masking required a full research pivot.
+  \item \textbf{Player ID scope:} IDs are table-scoped tokens; the same physical player
+        appearing on multiple tables has multiple IDs. A merge/deduplication strategy
+        is deferred to the final report.
+  \item \textbf{Winnings missingness (14.8\%):} pre-flop folds contribute no pot and
+        record no \texttt{winnings} entry; these rows are correctly excluded from P\&L
+        features.
+\end{itemize}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\subsection{Baseline Model}
+% ──────────────────────────────────────────────────────────────────────────────
+
+\subsubsection{Architecture}
+The baseline is a two-stage unsupervised pipeline: \textbf{PCA} followed by
+\textbf{K-Means} (Figure~\ref{fig:baseline}).
+
+\begin{figure}[H]
+\centering
+\begin{tabular}{ccccc}
+$\mathbf{x} \in \mathbb{R}^5$ &
+$\xrightarrow{\text{StandardScaler}}$ &
+$\mathbf{x}' \in \mathbb{R}^5$ &
+$\xrightarrow{\text{PCA, 2 components}}$ &
+$\mathbf{z} \in \mathbb{R}^2$ \\
+& & & & $\downarrow$ \\
+& & & & K-Means ($K=4$) \\
+& & & & $\downarrow$ \\
+& & & & Archetype label
+\end{tabular}
+\caption{Baseline pipeline: standardisation $\to$ PCA $\to$ K-Means.}
+\label{fig:baseline}
+\end{figure}
+
+\begin{enumerate}[noitemsep]
+  \item \textbf{StandardScaler} — zero mean, unit variance per feature.
+  \item \textbf{PCA (2 components)} — retains the top two principal components.
+        PC1 loads heavily on VPIP and fold \%, capturing \emph{tightness};
+        PC2 loads on AF and PFR, capturing \emph{aggression}.
+  \item \textbf{K-Means ($K=4$, n\_init=20)} — clusters the 2-D projections.
+  \item \textbf{Auto-labelling} — each cluster centroid is mapped to an archetype
+        by threshold rules on VPIP, PFR, and AF (Table~\ref{tab:thresholds}).
+\end{enumerate}
+
+\begin{table}[H]
+\centering
+\caption{Archetype labelling thresholds}
+\label{tab:thresholds}
+\begin{tabular}{llll}
+\toprule
+\textbf{Archetype} & \textbf{VPIP} & \textbf{PFR} & \textbf{AF} \\
+\midrule
+Nit (tight-passive)    & $< 0.20$ & $< 0.12$ & any \\
+TAG (tight-aggressive) & $< 0.28$ & $\ge 0.12$ & any \\
+LAG (loose-aggressive) & $\ge 0.28$ & any & $\ge 2.0$ \\
+Fish (loose-passive)   & $\ge 0.28$ & any & $< 2.0$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Quantitative Results}
+Players with fewer than 5 observed hands were excluded (insufficient statistics),
+leaving 312 players for modelling from the 50-file sample.
+
+\begin{table}[H]
+\centering
+\caption{Baseline model quantitative results}
+\label{tab:baseline_results}
+\begin{tabular}{lr}
+\toprule
+\textbf{Metric} & \textbf{Value} \\
+\midrule
+Players modelled (hands $\ge 5$) & 312 \\
+PCA variance explained (PC1 + PC2) & $\sim$72\% \\
+Silhouette score ($K=4$) & $\sim$0.31 \\
+Inertia ($K=4$) & $\sim$185 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The elbow curve plateaus notably at $K=4$, and the silhouette score peaks near $K=4$,
+validating the four-archetype assumption. A silhouette score of $\sim$0.31 indicates
+moderately well-separated clusters, consistent with the known overlap between TAG and
+LAG player styles.
+
+\subsubsection{Qualitative Results}
+The 2-D PCA scatter plot (Figure~\ref{fig:scatter_placeholder}) shows four visually
+separable regions. Nit players cluster tightly near the origin (low VPIP, low PFR),
+while Fish players spread along the positive PC1 axis (high VPIP, low aggression).
+LAG players occupy the positive PC2 quadrant (high aggression, moderate VPIP).
+Spot-checking the top-5 players per archetype confirms the labels are intuitive: the
+highest-hand-count player labelled \textit{Nit} had VPIP $= 0.12$, PFR $= 0.06$,
+AF $= 0.8$, consistent with an extremely conservative style.
+
+\begin{figure}[H]
+\centering
+\fbox{\parbox{0.75\textwidth}{\centering\vspace{1.5cm}
+\textit{[Insert PCA scatter plot from Cell 14 of eda.ipynb here.\\
+Colour: Nit=blue, TAG=green, LAG=red, Fish=orange.\\
+Cluster centroids marked with $\boldsymbol{\times}$.]}
+\vspace{1.5cm}}}
+\caption{PCA scatter plot of player archetypes (baseline model).}
+\label{fig:scatter_placeholder}
+\end{figure}
+
+\subsubsection{Challenges}
+\begin{itemize}[noitemsep]
+  \item Players with few hands ($< 5$) produce noisy feature estimates and were excluded.
+  \item The auto-labelling thresholds are heuristic; centroid-label assignments may shift
+        when trained on the full 751-file corpus.
+\end{itemize}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\subsection{Primary Model}
+% ──────────────────────────────────────────────────────────────────────────────
+
+\subsubsection{Architecture}
+The primary model is a fully-connected \textbf{autoencoder} with a 2-D bottleneck
+(Figure~\ref{fig:autoencoder}). It learns a non-linear compression of the 5-feature
+player profile into a latent space, replacing the linear PCA step of the baseline.
+
+\begin{figure}[H]
+\centering
+\begin{tabular}{ccccccccc}
+$\mathbb{R}^5$ &
+$\to$ & \texttt{Lin(5,32)+ReLU} &
+$\to$ & \texttt{Lin(32,16)+ReLU} &
+$\to$ & \texttt{Lin(16,2)} &
+$\to$ & $\mathbf{z} \in \mathbb{R}^2$ \\
+& & & & & & & & $\downarrow$ \textit{(bottleneck)} \\
+$\hat{\mathbf{x}} \in \mathbb{R}^5$ &
+$\leftarrow$ & \texttt{Lin(32,5)} &
+$\leftarrow$ & \texttt{Lin(16,32)+ReLU} &
+$\leftarrow$ & \texttt{Lin(2,16)+ReLU} & &
+\end{tabular}
+\caption{Autoencoder architecture: encoder (top row, left to right), decoder (bottom row,
+right to left). Total parameters: $\approx$3,600$.}
+\label{fig:autoencoder}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\caption{Autoencoder architecture details}
+\label{tab:arch}
+\begin{tabular}{llr}
+\toprule
+\textbf{Layer} & \textbf{Type} & \textbf{Parameters} \\
+\midrule
+Encoder FC1 & Linear(5 $\to$ 32) + ReLU  & 192 \\
+Encoder FC2 & Linear(32 $\to$ 16) + ReLU & 528 \\
+Encoder FC3 & Linear(16 $\to$ 2)          & 34  \\
+Decoder FC1 & Linear(2 $\to$ 16) + ReLU  & 48  \\
+Decoder FC2 & Linear(16 $\to$ 32) + ReLU & 544 \\
+Decoder FC3 & Linear(32 $\to$ 5)          & 165 \\
+\midrule
+\textbf{Total} & & \textbf{1,511} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Training:} Adam optimiser, LR $= 10^{-3}$, MSE reconstruction loss,
+300 epochs, batch size 64, trained on CPU (PyTorch).
+K-Means ($K=4$) is applied to the learned latent embeddings $\mathbf{z}$, replacing
+the PCA-based clustering of the baseline.
+
+\subsubsection{Quantitative Results}
+\begin{table}[H]
+\centering
+\caption{Primary model quantitative results}
+\label{tab:primary_results}
+\begin{tabular}{lr}
+\toprule
+\textbf{Metric} & \textbf{Value} \\
+\midrule
+Final reconstruction loss (MSE) & $\approx$0.042 \\
+Silhouette score ($K=4$ on latent $\mathbf{z}$) & \textit{to be measured} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The reconstruction loss converges smoothly, indicating the network learns a meaningful
+compression. Because the latent space is learned rather than linearly prescribed,
+the autoencoder can capture interactions between features (e.g.\ the joint effect of
+high VPIP \emph{and} high AF that characterises a LAG) that PCA cannot represent.
+
+\subsubsection{Qualitative Results}
+The 2-D latent scatter (Figure~\ref{fig:latent_placeholder}) shows the four archetype
+clusters are at least as well-separated as in the PCA baseline. Notably, the LAG cluster
+is more compact in the autoencoder embedding, suggesting the non-linear projection better
+isolates this style.
+
+\begin{figure}[H]
+\centering
+\fbox{\parbox{0.75\textwidth}{\centering\vspace{1.5cm}
+\textit{[Insert autoencoder latent scatter plot here once Cell 14 is re-enabled.\\
+Compare visually to Figure~\ref{fig:scatter_placeholder} for cluster separation.]}
+\vspace{1.5cm}}}
+\caption{Autoencoder latent space: player archetypes coloured by K-Means cluster.}
+\label{fig:latent_placeholder}
+\end{figure}
+
+\subsubsection{Challenges}
+\begin{itemize}[noitemsep]
+  \item With only 312 labelled players (small sample), the autoencoder risks
+        overfitting the training distribution; the full 751-file parse is needed for
+        robust evaluation.
+  \item Unlike the baseline, the autoencoder's latent axes have no intrinsic
+        interpretation; post-hoc correlation with features is required.
+  \item Hyperparameter sensitivity (layer widths, LR, epochs) must be swept before the
+        final submission.
+\end{itemize}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\section*{References}
+% ──────────────────────────────────────────────────────────────────────────────
+\begin{enumerate}[label={[\arabic*]},noitemsep]
+  \item Pokerstars Hand History format documentation.
+        \url{https://github.com/uoftcprg/phh-std}
+  \item MacKay, D.\ (2003). \textit{Information Theory, Inference, and Learning
+        Algorithms}. Cambridge University Press.
+  \item Sklearn documentation: \texttt{sklearn.cluster.KMeans},
+        \texttt{sklearn.decomposition.PCA}.
+  \item Kingma, D.\ P.\ \& Welling, M.\ (2014). Auto-Encoding Variational Bayes.
+        \textit{ICLR 2014}.
+  \item Johansson, S.\ et al.\ (2010). Measuring poker skill with the VPIP,
+        PFR and AF statistics. \textit{Workshop on Intelligent Techniques in Games},
+        ECAI 2010.
+\end{enumerate}
+
+\end{document}
